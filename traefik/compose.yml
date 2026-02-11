@@ -1,0 +1,66 @@
+#===============================================================================
+# Traefik v3 Reverse Proxy - Standalone Configuration
+#===============================================================================
+# This is a standalone Traefik instance that serves multiple applications
+# via the external 'intranet' Docker network.
+#
+# Prerequisites:
+#   1. Create the external network: docker network create intranet
+#   2. Create and secure acme.json: touch acme.json && chmod 600 acme.json
+#
+# Usage:
+#   docker compose up -d
+#
+#===============================================================================
+
+services:
+  traefik:
+    image: traefik:v2.11
+    container_name: traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - DOCKER_API_VERSION=1.44
+    command:
+      # API Dashboard (optional)
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
+
+      # Docker provider
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=intranet"
+
+      # Entrypoints
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+
+      # HTTP to HTTPS redirect (global)
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
+
+      # Let's Encrypt - TLS Challenge
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/acme.json"
+
+      # Logging
+      - "--log.level=INFO"
+
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./acme.json:/acme.json
+    networks:
+      - intranet
+
+#-------------------------------------------------------------------------------
+# Networks
+#-------------------------------------------------------------------------------
+networks:
+  intranet:
+    external: true

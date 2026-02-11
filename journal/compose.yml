@@ -1,0 +1,92 @@
+#===============================================================================
+# OJS (Open Journal Systems) Docker Compose Configuration
+#===============================================================================
+# Deploys OJS with PostgreSQL. Requires external Traefik reverse proxy.
+#
+# Prerequisites:
+#   1. External 'intranet' network must exist: docker network create intranet
+#   2. Traefik must be running and connected to intranet
+#   3. Run ./deploy.sh <domain> [locale] [email] to configure placeholders
+#
+# Usage:
+#   docker compose up -d
+#
+#===============================================================================
+
+services:
+  #-----------------------------------------------------------------------------
+  # OJS Application Container
+  #-----------------------------------------------------------------------------
+  {{JOURNAL}}:
+    image: "pkpofficial/${OJS_IMAGE:-ojs}:${OJS_VERSION:-latest}"
+    restart: unless-stopped
+    environment:
+      # Database connection (must match db service)
+      - DB_HOST=${DB_HOST}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      # Application URLs (configured by deploy.sh)
+      - OJS_URL=${OJS_URL}
+      - OJS_BASE_URL=${OJS_BASE_URL}
+      - OJS_BASE_URL_INDEX=${OJS_BASE_URL_INDEX}
+      - TRUSTED_HOSTS=${TRUSTED_HOSTS}
+      # Force HTTPS (required behind reverse proxy)
+      - HTTPS=on
+    labels:
+      # Enable Traefik for this service
+      - "traefik.enable=true"
+      # HTTPS Router with Let's Encrypt
+      - "traefik.http.routers.{{JOURNAL}}.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.{{JOURNAL}}.entrypoints=websecure"
+      - "traefik.http.routers.{{JOURNAL}}.tls=true"
+      - "traefik.http.routers.{{JOURNAL}}.tls.certresolver=letsencrypt"
+      # Service port
+      - "traefik.http.services.{{JOURNAL}}.loadbalancer.server.port=80"
+    volumes:
+      # Sync container time with host
+      - /etc/localtime:/etc/localtime
+      # Persistent storage for uploaded files
+      - ./volumes/files:/var/www/files
+      # Public assets - journal logos, images, etc.
+      - ./volumes/public:/var/www/html/public
+      # OJS configuration file
+      - ./volumes/config/config.inc.php:/var/www/html/config.inc.php
+      - ./volumes/config/php.ini:/usr/local/etc/php/conf.d/journal-php.ini
+      # SSL proxy fix (forces HTTPS recognition behind Traefik)
+      - ./volumes/config/force-ssl.php:/var/www/html/force-ssl.php
+      - ./volumes/config/force-ssl.ini:/usr/local/etc/php/conf.d/force-ssl.ini
+    networks:
+      - intranet
+      - internal
+    depends_on:
+      - {{DATABASE}}
+
+  #-----------------------------------------------------------------------------
+  # MariaDB Database Container
+  #-----------------------------------------------------------------------------
+  {{DATABASE}}:
+    image: mariadb:12.1.2-ubi10
+    restart: unless-stopped
+    command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+      - MYSQL_DATABASE=${DB_NAME}
+      - MYSQL_USER=${DB_USER}
+      - MYSQL_PASSWORD=${DB_PASSWORD}
+    volumes:
+      # Persistent database storage
+      - ./volumes/db:/var/lib/mysql
+    networks:
+      - internal
+
+#-------------------------------------------------------------------------------
+# Networks
+#-------------------------------------------------------------------------------
+networks:
+  # External network shared with Traefik
+  intranet:
+    external: true
+  # Internal network for DB isolation (not exposed to Traefik)
+  internal:
+    driver: bridge
